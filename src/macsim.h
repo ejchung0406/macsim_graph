@@ -374,6 +374,9 @@ private:
     ret *= b;
     return ret;
   }
+
+public:
+  uint64_t base_pc = -1;
 };
 
 #endif

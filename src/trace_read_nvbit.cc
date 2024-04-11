@@ -298,9 +298,9 @@ void nvbit_decoder_c::convert_dyn_uop(inst_info_s *info, void *trace_info,
   trace_uop->m_va = 0;
 
   trace_uop->m_active_mask = pi->m_active_mask;
+  trace_uop->m_target = pi->m_br_target_addr;
   if (info->m_table_info->m_cf_type) {
     trace_uop->m_actual_taken = pi->m_br_taken_mask ? true : false;
-    trace_uop->m_target = pi->m_br_target_addr;
 
     trace_uop->m_taken_mask = pi->m_br_taken_mask;
     trace_uop->m_reconverge_addr = pi->m_reconv_inst_addr;
@@ -734,40 +734,57 @@ inst_info_s *nvbit_decoder_c::convert_pinuop_to_t_uop(void *trace_info,
   return first_info;
 }
 
-uint64_t base_pc = -1;
-static bool is_queue_operation(macsim_c* m_simBase, uint64_t pc, bool print) {
+// 0: not queue operation
+// 1: queue init operation
+// 2: queue push operation
+// 3: queue pop operation
+int is_queue_operation(macsim_c* m_simBase, uint64_t pc, bool print, process_s *process) {
   // how to get the kernel name? we should only skip the instructions in the gather_kernel_lq_em kernel.
-
-  pc -= base_pc;
+  pc -= m_simBase->base_pc;
+  // printf("pc: %ld\n", pc);
   /* PR */
-  if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("pr") == 0){
-    if ((pc == 0xc0) || 
-      (pc == 0xe0) ||
-      (pc == 0x110) ||
-      (0x170 <= pc && pc <= 0x2b0) || 
-      (0x2d0 <= pc && pc <= 0x550) || 
-      (0x640 <= pc && pc <= 0x8a0)) {
-    
-      // if (print) printf("skip! pc: %ld\n", pc);
-      return true;
+
+  bool is_gather_kernel = false;
+  if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("pr") == 0) {
+    if ((process->m_current_vector_index - 1) % 2 == 1) {
+      is_gather_kernel = true;
     }
-    else
-      return false;
   } else if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("bfs") == 0) {
-    if ((pc == 0xc0) || 
-      (pc == 0xe0) ||
-      (pc == 0x120) ||
-      (0x210 <= pc && pc <= 0x330) || 
-      (0x350 <= pc && pc <= 0x5d0) || 
-      (0x8e0 <= pc && pc <= 0xb40)) {
-    
-      // if (print) printf("skip! pc: %ld\n", pc);
-      return true;
+    if ((process->m_current_vector_index - 1) != 0) {
+      is_gather_kernel = true;
     }
-    else
-      return false;
-  } 
-  return false;
+  }
+
+  if (is_gather_kernel) {
+    if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("pr") == 0){
+      if ((pc == 0xc0) || 
+        (pc == 0xe0) ||
+        (pc == 0x110)) {
+        return 1;
+      } else if (0x170 <= pc && pc <= 0x2b0) {
+        return 2;
+      } else if ((0x2d0 <= pc && pc <= 0x550) || 
+                 (0x640 <= pc && pc <= 0x8a0)) {
+        return 3;
+      }
+      else
+        return 0;
+    } else if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("bfs") == 0) {
+      if ((pc == 0xc0) || 
+        (pc == 0xe0) ||
+        (pc == 0x120)) {
+        return 1;
+      } else if (0x210 <= pc && pc <= 0x330) {
+        return 2;
+      } else if ((0x350 <= pc && pc <= 0x5d0) || 
+                 (0x8e0 <= pc && pc <= 0xb40)) {
+        return 3;
+      }
+      else
+        return 0;
+    } 
+  }
+  return 0;
 }
 
 
@@ -822,11 +839,11 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
           read_success = read_trace(core_id, thread_trace_info->m_next_trace_info,
                                   sim_thread_id, &inst_read);
           next_pc = ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_inst_addr;
-          if (base_pc == -1) {
-            base_pc = ((trace_info_nvbit_s *)thread_trace_info->m_prev_trace_info)->m_inst_addr;
-            // printf("base_pc: %ld\n", base_pc);
+          if (m_simBase->base_pc == -1) {
+            m_simBase->base_pc = ((trace_info_nvbit_s *)thread_trace_info->m_prev_trace_info)->m_inst_addr;
+            // printf("base_pc: %ld\n", m_simBase->base_pc);
           }
-          try_again = is_queue_operation(m_simBase, next_pc, sim_thread_id == 0 && core_id == 0) && 
+          try_again = is_queue_operation(m_simBase, next_pc, sim_thread_id == 0 && core_id == 0, thread_trace_info->m_process) && 
                 core->get_trace_info(sim_thread_id)->m_trace_ended == false;
           if (*KNOB(KNOB_GRAPH_SKIP_SHMEM) == false) {
             try_again = try_again && ((trace_info_nvbit_s *)thread_trace_info)->m_opcode != NVBIT_LDS && 
@@ -982,8 +999,8 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
   if (uop->m_cf_type) {
     uop->m_taken_mask = trace_uop->m_taken_mask;
     uop->m_reconverge_addr = trace_uop->m_reconverge_addr;
-    uop->m_target_addr = trace_uop->m_target;
   }
+  uop->m_target_addr = trace_uop->m_target;
 
   if (uop->m_opcode == GPU_EN) {
     m_simBase->m_gpu_paused = false;

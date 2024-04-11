@@ -155,4 +155,6 @@ private:
 private:
 };
 
+int is_queue_operation(macsim_c* m_simBase, uint64_t pc, bool print, process_s *process); 
+
 #endif  // TRACE_READ_NVBIT_H_INCLUDED

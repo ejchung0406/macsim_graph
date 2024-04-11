@@ -60,6 +60,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include "rob_smc.h"
 #include "sw_managed_cache.h"
 #include "process_manager.h"
+#include "trace_read_nvbit.h"
 
 #include "debug_macros.h"
 
@@ -665,6 +666,14 @@ bool exec_c::exec(int thread_id, int entry, uop_c* uop) {
 
   // set uop done cycle
   if (uop_latency > 0) {
+    thread_s *thread_trace_info = core->get_trace_info(uop->m_thread_id);
+    process_s *process = thread_trace_info->m_process;
+
+    // printf("m_npc: %lld\n", uop->m_target_addr - m_simBase->base_pc);
+    if (is_queue_operation(m_simBase, uop->m_target_addr, false, process) >= 2 && *m_simBase->m_knobs->KNOB_GRAPH_SCHEDULE_METHOD == 1) {
+      // printf("queue operation\n");
+      uop_latency += *m_simBase->m_knobs->KNOB_GRAPH_QUEUE_CYCLE;
+    }
     int max_latency =
       std::max(uop_latency,
                static_cast<int>(*m_simBase->m_knobs->KNOB_EXEC_RETIRE_LATENCY));

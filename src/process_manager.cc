@@ -635,6 +635,8 @@ void process_manager_c::setup_process(process_s *process) {
         ++count;
       }
     }
+
+    m_simBase->base_pc = -1;
   }
 
   // TODO (jaekyu, 1-30-2009)
