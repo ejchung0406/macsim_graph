@@ -669,9 +669,18 @@ bool exec_c::exec(int thread_id, int entry, uop_c* uop) {
     thread_s *thread_trace_info = core->get_trace_info(uop->m_thread_id);
     process_s *process = thread_trace_info->m_process;
 
-    // printf("m_npc: %lld\n", uop->m_target_addr - m_simBase->base_pc);
-    if (is_queue_operation(m_simBase, uop->m_target_addr, false, process) >= 2 && *m_simBase->m_knobs->KNOB_GRAPH_SCHEDULE_METHOD == 1) {
-      // printf("queue operation\n");
+    if (is_queue_operation(m_simBase, uop->m_target_addr, false, process) >= 2 && 
+        *m_simBase->m_knobs->KNOB_GRAPH_SCHEDULE_METHOD == 1 &&
+        uop->m_opcode != UOP_NVBIT_LDS && uop->m_opcode != UOP_NVBIT_STS && uop->m_opcode != UOP_NVBIT_LDSM) {
+      switch (is_queue_operation(m_simBase, uop->m_target_addr, false, process)) {
+        case 2:
+          STAT_EVENT(GRAPH_QUEUE_PUSH_EXEC_COUNT);
+          break;
+        case 3:
+          STAT_EVENT(GRAPH_QUEUE_POP_EXEC_COUNT);
+          break;
+      }
+      
       uop_latency += *m_simBase->m_knobs->KNOB_GRAPH_QUEUE_CYCLE;
     }
     int max_latency =

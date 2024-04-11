@@ -824,7 +824,7 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
   if (thread_trace_info->m_bom) {
     bool inst_read;  // indicate new instruction has been read from a trace file
 
-    // printf("KNOB_GRAPH_SKIP_SHMEM: %d\n", (int)*KNOB(KNOB_GRAPH_SKIP_SHMEM));
+    // printf("KNOB_GRAPH_SCHEDULE_METHOD: %d\n", (int)*KNOB(KNOB_GRAPH_SCHEDULE_METHOD));
 
     if (core->m_inst_fetched[sim_thread_id] < *KNOB(KNOB_MAX_INSTS)) {
       // read next instruction
@@ -833,23 +833,43 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
                                   sim_thread_id, &inst_read);
       } else {
         // euijun: skip instructions based on PC information
-        uint64_t next_pc;
+        uint64_t prev_pc, next_pc, next_next_pc;
         bool try_again = false;
         do {
           read_success = read_trace(core_id, thread_trace_info->m_next_trace_info,
                                   sim_thread_id, &inst_read);
           next_pc = ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_inst_addr;
+          next_next_pc = ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_br_target_addr;
+          prev_pc = ((trace_info_nvbit_s *)thread_trace_info->m_prev_trace_info)->m_inst_addr;
           if (m_simBase->base_pc == -1) {
-            m_simBase->base_pc = ((trace_info_nvbit_s *)thread_trace_info->m_prev_trace_info)->m_inst_addr;
+            m_simBase->base_pc = prev_pc;
             // printf("base_pc: %ld\n", m_simBase->base_pc);
           }
-          try_again = is_queue_operation(m_simBase, next_pc, sim_thread_id == 0 && core_id == 0, thread_trace_info->m_process) && 
-                core->get_trace_info(sim_thread_id)->m_trace_ended == false;
-          if (*KNOB(KNOB_GRAPH_SKIP_SHMEM) == false) {
-            try_again = try_again && ((trace_info_nvbit_s *)thread_trace_info)->m_opcode != NVBIT_LDS && 
-                ((trace_info_nvbit_s *)thread_trace_info)->m_opcode != NVBIT_LDSM &&
-                ((trace_info_nvbit_s *)thread_trace_info)->m_opcode != NVBIT_STS;
+
+          if (is_queue_operation(m_simBase, next_pc, false, thread_trace_info->m_process) == 0) {
+            switch (is_queue_operation(m_simBase, next_next_pc, false, thread_trace_info->m_process)) {
+              case 1:
+                STAT_EVENT(GRAPH_QUEUE_INIT_COUNT);
+                break;
+              case 2:
+                STAT_EVENT(GRAPH_QUEUE_PUSH_COUNT);
+                break;
+              case 3:
+                STAT_EVENT(GRAPH_QUEUE_POP_COUNT);
+                break;
+            }
           }
+
+          try_again = is_queue_operation(m_simBase, next_pc, sim_thread_id == 0 && core_id == 0, thread_trace_info->m_process) != 0 && 
+                core->get_trace_info(sim_thread_id)->m_trace_ended == false;
+          // printf("pc: %ld, opcode: %s\n", next_pc, g_tr_opcode_names[((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode]);
+          if (*KNOB(KNOB_GRAPH_SKIP_SHMEM) == false) {
+            try_again = try_again && ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode != NVBIT_LDS && 
+                ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode != NVBIT_LDSM &&
+                ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode != NVBIT_STS;
+          }
+
+          if (try_again) STAT_EVENT(GRAPH_SKIPPED_INSTR_COUNT);
                 
           // if (sim_thread_id == 0 && core_id == 0) printf("instr id: %lld, next_pc: %ld\n", core->m_inst_fetched[sim_thread_id], next_pc);
         } while (try_again);
