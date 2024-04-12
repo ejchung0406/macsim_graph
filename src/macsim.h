@@ -72,6 +72,12 @@ class Topology;
 #define MEMORY m_simBase->m_memory
 #define DYFR m_simBase->m_dyfr
 
+typedef struct queue_data_ {
+  uint64_t count;
+  Counter start;
+  Counter end;
+} queue_data_t;
+
 ///////////////////////////////////////////////////////////////////////////////////////////////
 /// \brief macsim top-level class
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -377,6 +383,7 @@ private:
 
 public:
   uint64_t base_pc = -1;
+  queue_data_t* queue_data;
 };
 
 #endif

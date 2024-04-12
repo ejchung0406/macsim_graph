@@ -129,5 +129,6 @@ debug_bp_dir 0
 # Graph Configuration
 graph_skip_shmem 0
 graph_queue_method pr
-graph_schedule_method 0
-graph_queue_cycle 0
+graph_schedule_method 1
+graph_queue_decompress_latency 100
+graph_queue_pop_latency 100

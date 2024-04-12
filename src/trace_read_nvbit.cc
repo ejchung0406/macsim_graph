@@ -734,11 +734,7 @@ inst_info_s *nvbit_decoder_c::convert_pinuop_to_t_uop(void *trace_info,
   return first_info;
 }
 
-// 0: not queue operation
-// 1: queue init operation
-// 2: queue push operation
-// 3: queue pop operation
-int is_queue_operation(macsim_c* m_simBase, uint64_t pc, bool print, process_s *process) {
+queue_op is_queue_operation(macsim_c* m_simBase, uint64_t pc, bool print, process_s *process) {
   // how to get the kernel name? we should only skip the instructions in the gather_kernel_lq_em kernel.
   pc -= m_simBase->base_pc;
   // printf("pc: %ld\n", pc);
@@ -760,31 +756,31 @@ int is_queue_operation(macsim_c* m_simBase, uint64_t pc, bool print, process_s *
       if ((pc == 0xc0) || 
         (pc == 0xe0) ||
         (pc == 0x110)) {
-        return 1;
+        return queue_op::QUEUE_INIT_OP;
       } else if (0x170 <= pc && pc <= 0x2b0) {
-        return 2;
+        return queue_op::QUEUE_PUSH_OP;
       } else if ((0x2d0 <= pc && pc <= 0x550) || 
                  (0x640 <= pc && pc <= 0x8a0)) {
-        return 3;
+        return queue_op::QUEUE_POP_OP;
       }
       else
-        return 0;
+        return queue_op::NOT_QUEUE_OP;
     } else if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("bfs") == 0) {
       if ((pc == 0xc0) || 
         (pc == 0xe0) ||
         (pc == 0x120)) {
-        return 1;
+        return queue_op::QUEUE_INIT_OP;
       } else if (0x210 <= pc && pc <= 0x330) {
-        return 2;
+        return queue_op::QUEUE_PUSH_OP;
       } else if ((0x350 <= pc && pc <= 0x5d0) || 
                  (0x8e0 <= pc && pc <= 0xb40)) {
-        return 3;
+        return queue_op::QUEUE_POP_OP;
       }
       else
-        return 0;
+        return queue_op::NOT_QUEUE_OP;
     } 
   }
-  return 0;
+  return queue_op::NOT_QUEUE_OP;
 }
 
 
@@ -846,21 +842,21 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
             // printf("base_pc: %ld\n", m_simBase->base_pc);
           }
 
-          if (is_queue_operation(m_simBase, next_pc, false, thread_trace_info->m_process) == 0) {
+          if (is_queue_operation(m_simBase, next_pc, false, thread_trace_info->m_process) == queue_op::NOT_QUEUE_OP) {
             switch (is_queue_operation(m_simBase, next_next_pc, false, thread_trace_info->m_process)) {
-              case 1:
-                STAT_EVENT(GRAPH_QUEUE_INIT_COUNT);
+              case queue_op::QUEUE_INIT_OP:
+                STAT_CORE_EVENT(core_id, GRAPH_QUEUE_INIT_COUNT);
                 break;
-              case 2:
-                STAT_EVENT(GRAPH_QUEUE_PUSH_COUNT);
+              case queue_op::QUEUE_PUSH_OP:
+                STAT_CORE_EVENT(core_id, GRAPH_QUEUE_PUSH_COUNT);
                 break;
-              case 3:
-                STAT_EVENT(GRAPH_QUEUE_POP_COUNT);
+              case queue_op::QUEUE_POP_OP:
+                STAT_CORE_EVENT(core_id, GRAPH_QUEUE_POP_COUNT);
                 break;
             }
           }
 
-          try_again = is_queue_operation(m_simBase, next_pc, sim_thread_id == 0 && core_id == 0, thread_trace_info->m_process) != 0 && 
+          try_again = is_queue_operation(m_simBase, next_pc, sim_thread_id == 0 && core_id == 0, thread_trace_info->m_process) != queue_op::NOT_QUEUE_OP && 
                 core->get_trace_info(sim_thread_id)->m_trace_ended == false;
           // printf("pc: %ld, opcode: %s\n", next_pc, g_tr_opcode_names[((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode]);
           if (*KNOB(KNOB_GRAPH_SKIP_SHMEM) == false) {
@@ -869,7 +865,7 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
                 ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode != NVBIT_STS;
           }
 
-          if (try_again) STAT_EVENT(GRAPH_SKIPPED_INSTR_COUNT);
+          if (try_again) STAT_CORE_EVENT(core_id, GRAPH_SKIPPED_INSTR_COUNT);
                 
           // if (sim_thread_id == 0 && core_id == 0) printf("instr id: %lld, next_pc: %ld\n", core->m_inst_fetched[sim_thread_id], next_pc);
         } while (try_again);

@@ -669,19 +669,32 @@ bool exec_c::exec(int thread_id, int entry, uop_c* uop) {
     thread_s *thread_trace_info = core->get_trace_info(uop->m_thread_id);
     process_s *process = thread_trace_info->m_process;
 
-    if (is_queue_operation(m_simBase, uop->m_target_addr, false, process) >= 2 && 
-        *m_simBase->m_knobs->KNOB_GRAPH_SCHEDULE_METHOD == 1 &&
+    if ((is_queue_operation(m_simBase, uop->m_target_addr, false, process) == queue_op::QUEUE_PUSH_OP || 
+         is_queue_operation(m_simBase, uop->m_target_addr, false, process) == queue_op::QUEUE_POP_OP) && 
+        *KNOB(KNOB_GRAPH_SCHEDULE_METHOD) == 1 &&
         uop->m_opcode != UOP_NVBIT_LDS && uop->m_opcode != UOP_NVBIT_STS && uop->m_opcode != UOP_NVBIT_LDSM) {
+      queue_data_t* queue_data = &m_simBase->queue_data[m_core_id];
       switch (is_queue_operation(m_simBase, uop->m_target_addr, false, process)) {
-        case 2:
-          STAT_EVENT(GRAPH_QUEUE_PUSH_EXEC_COUNT);
+        case queue_op::QUEUE_PUSH_OP:
+          /* Queue Push */
+          STAT_CORE_EVENT(m_core_id, GRAPH_QUEUE_PUSH_EXEC_COUNT);
+          if (queue_data->count == 0) {
+            queue_data->start = m_cur_core_cycle + *KNOB(KNOB_GRAPH_QUEUE_DECOMPRESS_LATENCY); 
+            uop_latency += *KNOB(KNOB_GRAPH_QUEUE_DECOMPRESS_LATENCY) + *KNOB(KNOB_GRAPH_QUEUE_POP_LATENCY);
+          }
+          queue_data->count++;
           break;
-        case 3:
-          STAT_EVENT(GRAPH_QUEUE_POP_EXEC_COUNT);
+        case queue_op::QUEUE_POP_OP:
+          /* Queue Pop */
+          STAT_CORE_EVENT(m_core_id, GRAPH_QUEUE_POP_EXEC_COUNT);
+          if (queue_data->start + *KNOB(KNOB_GRAPH_QUEUE_POP_LATENCY) < m_cur_core_cycle) {
+            STAT_CORE_EVENT(m_core_id, GRAPH_QUEUE_PUSH_NOT_READY); 
+          } else {
+            queue_data->count = 0; 
+            uop_latency += *KNOB(KNOB_GRAPH_QUEUE_POP_LATENCY);
+          }
           break;
       }
-      
-      uop_latency += *m_simBase->m_knobs->KNOB_GRAPH_QUEUE_CYCLE;
     }
     int max_latency =
       std::max(uop_latency,

@@ -30,4 +30,5 @@ POSSIBILITY OF SUCH DAMAGE.
 param<GRAPH_SKIP_SHMEM,         graph_skip_shmem,         bool,             false> 
 param<GRAPH_QUEUE_METHOD,          graph_queue_method,          string,             pr> 
 param<GRAPH_SCHEDULE_METHOD,          graph_schedule_method,          uns,             0>
-param<GRAPH_QUEUE_CYCLE,           graph_queue_cycle,           uns,             0>
+param<GRAPH_QUEUE_DECOMPRESS_LATENCY,           graph_queue_decompress_latency,           uns,             0>
+param<GRAPH_QUEUE_POP_LATENCY,           graph_queue_pop_latency,           uns,             0>

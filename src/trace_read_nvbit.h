@@ -155,6 +155,12 @@ private:
 private:
 };
 
-int is_queue_operation(macsim_c* m_simBase, uint64_t pc, bool print, process_s *process); 
+enum class queue_op {
+  NOT_QUEUE_OP,
+  QUEUE_INIT_OP,
+  QUEUE_PUSH_OP,
+  QUEUE_POP_OP,
+};
+queue_op is_queue_operation(macsim_c* m_simBase, uint64_t pc, bool print, process_s *process); 
 
 #endif  // TRACE_READ_NVBIT_H_INCLUDED

@@ -259,6 +259,9 @@ void macsim_c::init_memory(void) {
   m_termination_check = new bool[m_num_sim_cores];
   fill_n(m_termination_check, m_num_sim_cores, false);
   m_termination_count = 0;
+
+  queue_data = new queue_data_t[m_num_sim_cores];
+  fill_n(queue_data, m_num_sim_cores, (queue_data_t){0, 0, 0});
 }
 
 // =======================================
@@ -615,6 +618,8 @@ void macsim_c::deallocate_memory(void) {
     delete m_core_pointers[ii + num_large_medium_cores];
     m_core_pointers[ii + num_large_medium_cores] = NULL;
   }
+
+  delete[] queue_data;
 }
 
 // =======================================
