@@ -58,6 +58,8 @@ POSSIBILITY OF SUCH DAMAGE.
 
 #include "all_knobs.h"
 
+#include <algorithm>
+
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 #define DEBUG(args...) _DEBUG(*KNOB(KNOB_DEBUG_TRACE_READ), ##args)
@@ -735,7 +737,6 @@ inst_info_s *nvbit_decoder_c::convert_pinuop_to_t_uop(void *trace_info,
 }
 
 queue_op is_queue_operation(macsim_c* m_simBase, uint64_t pc, bool print, process_s *process) {
-  // how to get the kernel name? we should only skip the instructions in the gather_kernel_lq_em kernel.
   pc -= m_simBase->base_pc;
   // printf("pc: %ld\n", pc);
   /* PR */
@@ -749,40 +750,82 @@ queue_op is_queue_operation(macsim_c* m_simBase, uint64_t pc, bool print, proces
     if ((process->m_current_vector_index - 1) != 0) {
       is_gather_kernel = true;
     }
+  } else if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("cc") == 0) {
+    if ((process->m_current_vector_index - 1) % 2 == 1) {
+      is_gather_kernel = true;
+    }
   }
 
   if (is_gather_kernel) {
     if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("pr") == 0){
-      if ((pc == 0xc0) || 
-        (pc == 0xe0) ||
-        (pc == 0x110)) {
-        return queue_op::QUEUE_INIT_OP;
-      } else if (0x170 <= pc && pc <= 0x2b0) {
+      if (0x140 <= pc && pc <= 0x270) {
         return queue_op::QUEUE_PUSH_OP;
-      } else if ((0x2d0 <= pc && pc <= 0x550) || 
-                 (0x640 <= pc && pc <= 0x8a0)) {
+      } else if ((0x300 <= pc && pc <= 0x980) || 
+                 (pc == 0xa40)) {
         return queue_op::QUEUE_POP_OP;
-      }
-      else
+      } else
         return queue_op::NOT_QUEUE_OP;
     } else if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("bfs") == 0) {
-      if ((pc == 0xc0) || 
-        (pc == 0xe0) ||
-        (pc == 0x120)) {
-        return queue_op::QUEUE_INIT_OP;
-      } else if (0x210 <= pc && pc <= 0x330) {
+      if (0x140 <= pc && pc <= 0x2f0) {
         return queue_op::QUEUE_PUSH_OP;
-      } else if ((0x350 <= pc && pc <= 0x5d0) || 
-                 (0x8e0 <= pc && pc <= 0xb40)) {
+      } else if ((0x380 <= pc && pc <= 0xa00) || 
+                 (pc == 0xac0)) {
         return queue_op::QUEUE_POP_OP;
-      }
-      else
+      } else
         return queue_op::NOT_QUEUE_OP;
-    } 
+    } else if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("cc") == 0) {
+      if (0x140 <= pc && pc <= 0x270) {
+        return queue_op::QUEUE_PUSH_OP;
+      } else if ((0x300 <= pc && pc <= 0x980) || 
+                 (pc == 0xa40)) {
+        return queue_op::QUEUE_POP_OP;
+      } else
+        return queue_op::NOT_QUEUE_OP;
+    }
   }
   return queue_op::NOT_QUEUE_OP;
 }
 
+static bool first_time_in_loop = false;
+static bool second_time_in_loop = false;
+static unordered_map<int, unordered_set<uint16_t>> dst_reg_map;
+static bool is_while_loop_starting (macsim_c* m_simBase, uint64_t pc, bool print, process_s *process) {
+  pc -= m_simBase->base_pc;
+  bool is_gather_kernel = false;
+  if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("pr") == 0) {
+    if ((process->m_current_vector_index - 1) % 2 == 1) {
+      is_gather_kernel = true;
+    }
+  } else if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("bfs") == 0) {
+    if ((process->m_current_vector_index - 1) != 0) {
+      is_gather_kernel = true;
+    }
+  } else if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("cc") == 0) {
+    if ((process->m_current_vector_index - 1) % 2 == 1) {
+      is_gather_kernel = true;
+    }
+  }
+
+  if (is_gather_kernel) {
+    if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("pr") == 0){
+      if (pc == 0x300)
+        return true;
+      else 
+        return false;
+    } else if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("bfs") == 0) {
+      if (pc == 0x380)
+        return true;
+      else 
+        return false;
+    } else if (KNOB(KNOB_GRAPH_QUEUE_METHOD)->getValue().compare("cc") == 0) {
+      if (pc == 0x300)
+        return true;
+      else 
+        return false;
+    }
+  }
+  return false;
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -817,9 +860,12 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
   /// BOM (beginning of macro) : need to get a next instruction
   ///
   
+  if (dst_reg_map.find(sim_thread_id) == dst_reg_map.end()) {
+    dst_reg_map[sim_thread_id] = unordered_set<uint16_t>();
+  } 
   if (thread_trace_info->m_bom) {
     bool inst_read;  // indicate new instruction has been read from a trace file
-
+    bool skipped = false;
     // printf("KNOB_GRAPH_SCHEDULE_METHOD: %d\n", (int)*KNOB(KNOB_GRAPH_SCHEDULE_METHOD));
 
     if (core->m_inst_fetched[sim_thread_id] < *KNOB(KNOB_MAX_INSTS)) {
@@ -832,8 +878,10 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
         uint64_t prev_pc, next_pc, next_next_pc;
         bool try_again = false;
         do {
+          if (try_again) skipped = true;
           read_success = read_trace(core_id, thread_trace_info->m_next_trace_info,
                                   sim_thread_id, &inst_read);
+          ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_skipped = false;
           next_pc = ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_inst_addr;
           next_next_pc = ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_br_target_addr;
           prev_pc = ((trace_info_nvbit_s *)thread_trace_info->m_prev_trace_info)->m_inst_addr;
@@ -856,17 +904,43 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
             }
           }
 
+          if (is_while_loop_starting(m_simBase, next_pc, false, thread_trace_info->m_process)) {
+            if (!first_time_in_loop && !second_time_in_loop) {
+              first_time_in_loop = true;
+            } else {
+              if (!second_time_in_loop) {
+                second_time_in_loop = true;
+              } 
+            }
+          } 
+          // for 1st iteration, first = true / second = false
+          // for 2nd~ iteration, first = true / second = true
+
           try_again = is_queue_operation(m_simBase, next_pc, sim_thread_id == 0 && core_id == 0, thread_trace_info->m_process) != queue_op::NOT_QUEUE_OP && 
                 core->get_trace_info(sim_thread_id)->m_trace_ended == false;
           // printf("pc: %ld, opcode: %s\n", next_pc, g_tr_opcode_names[((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode]);
           if (*KNOB(KNOB_GRAPH_SKIP_SHMEM) == false) {
-            try_again = try_again && ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode != NVBIT_LDS && 
-                ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode != NVBIT_LDSM &&
-                ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode != NVBIT_STS;
+            bool is_shmem_access = ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode == NVBIT_LDS || 
+                                   ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode == NVBIT_LDSM ||
+                                   ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_opcode == NVBIT_STS;
+            is_shmem_access = is_shmem_access && (first_time_in_loop && !second_time_in_loop);
+            try_again = try_again && !is_shmem_access;
           }
 
-          if (try_again) STAT_CORE_EVENT(core_id, GRAPH_SKIPPED_INSTR_COUNT);
-                
+          if (try_again) {
+            STAT_CORE_EVENT(core_id, GRAPH_SKIPPED_INSTR_COUNT);
+            if (((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_num_dest_regs > 0) {
+              for (int i = 0; i < ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_num_dest_regs; i++) {
+                uint16_t dst_reg = ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_dst[i];
+                if (dst_reg != 255)
+                  dst_reg_map[sim_thread_id].insert(dst_reg);
+              }
+            }
+          } else {
+            if (skipped == true)
+              ((trace_info_nvbit_s *)thread_trace_info->m_next_trace_info)->m_skipped = true;
+          }
+
           // if (sim_thread_id == 0 && core_id == 0) printf("instr id: %lld, next_pc: %ld\n", core->m_inst_fetched[sim_thread_id], next_pc);
         } while (try_again);
       }
@@ -927,10 +1001,24 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
       }
     }
 
+    if (trace_info.m_skipped == true) {
+      if (dst_reg_map.find(sim_thread_id) != dst_reg_map.end()) {
+        for (auto it = dst_reg_map[sim_thread_id].begin(); it != dst_reg_map[sim_thread_id].end(); it++) {
+          if (trace_info.m_num_read_regs == MAX_NVBIT_SRC_NUM) {
+            break;
+          } else {
+            trace_info.m_src[trace_info.m_num_read_regs++] = *it;
+          }
+        }
+        dst_reg_map[sim_thread_id].clear();
+      }
+    }
+
     // So far we have raw instruction format, so we need to MacSim specific trace format
     info =
       convert_pinuop_to_t_uop(&trace_info, thread_trace_info->m_trace_uop_array,
                               core_id, sim_thread_id);
+    
 
     trace_uop = thread_trace_info->m_trace_uop_array[0];
     num_uop = info->m_trace_info.m_num_uop;
@@ -1050,8 +1138,8 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
   uop->m_num_srcs = trace_uop->m_num_src_regs;
   uop->m_num_dests = trace_uop->m_num_dest_regs;
 
-  ASSERTM(uop->m_num_dests < MAX_DST_NUM, "uop->num_dests=%d MAX_DST_NUM=%d\n",
-          uop->m_num_dests, MAX_DST_NUM);
+  ASSERTM(uop->m_num_dests < MAX_NVBIT_DST_NUM, "uop->num_dests=%d MAX_NVBIT_DST_NUM=%d\n",
+          uop->m_num_dests, MAX_NVBIT_DST_NUM);
 
   // uop number is specific to the core
   uop->m_unique_num = core->inc_and_get_unique_uop_num();
@@ -1076,6 +1164,7 @@ bool nvbit_decoder_c::get_uops_from_traces(int core_id, uop_c *uop,
 
   for (int index = 0; index < uop->m_num_dests; ++index) {
     uop->m_dest_info[index] = trace_uop->m_dests[index].m_id;
+    // printf("%d, %d\n", trace_uop->m_dests[index].m_reg, NUM_REG_IDS);
     ASSERT(trace_uop->m_dests[index].m_reg < NUM_REG_IDS);
   }
 

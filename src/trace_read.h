@@ -292,7 +292,7 @@ typedef struct trace_info_nvbit_s {
   uint8_t m_cache_level;  // for prefetch?
   uint8_t m_cache_operator;  // for loads, stores, atomic, prefetch(?)
   uint64_t m_next_inst_addr;  // next pc address, not present in raw trace fo
-
+  bool m_skipped;
 } trace_info_nvbit_s;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
